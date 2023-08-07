@@ -5,35 +5,70 @@
 #ifndef PARALLELQUEUE_PARALLELQUEUE_H
 #define PARALLELQUEUE_PARALLELQUEUE_H
 #include <memory>
+#include <condition_variable>
+#include <mutex>
+#include <atomic>
+
 template<typename T>
 struct WithMutex {
     template<class TT>
-    WithMutex(TT&& ptr): ptr{std::forward<TT>(ptr)} {}
-
+    explicit WithMutex(TT&& ptr): ptr{std::forward<TT>(ptr)} {}
     T ptr;
     std::mutex mutex;
 };
 
 template<typename T>
 class ParallelQueue {
-    ParallelQueue(){}
+public:
+    ParallelQueue():
+            head{new Node}, tail{head.ptr.get()}, queue_size{0}, m_stopped{false}{}
+
+    bool pop(T &entry) {
+        std::lock_guard<std::mutex> lock{head.mutex};
+        m_conditional.wait(lock, [this](){return m_stopped || head.ptr.get() != getTailSafe();});
+        if (m_stopped) return false;
+        entry = std::move(head.ptr->value);
+        takeHeadUnsafe();
+        queue_size--;
+    }
+
+    template<typename TT>
+    void push(TT &&value) {
+        std::lock_guard<std::mutex> lock{tail.mutex};
+        if(!m_stopped){
+            tail.ptr->value = std::forward<TT>(value);
+            tail.ptr->next.reset(new Node);
+            tail.ptr = tail.ptr->next.get();
+            queue_size++;
+            m_conditional.notify_one();
+        }
+    }
+
+    void stop() {
+        std::scoped_lock lock(head.mutex, tail.mutex);
+        m_stopped = true;
+        m_conditional.notify_all();
+    }
+
+    size_t get_size(){
+        return queue_size;
+    }
+
+
 private:
     struct Node {
         T value;
         std::unique_ptr<Node> next;
     };
-
     Node* getTailSafe() {
         std::lock_guard<std::mutex> lck{tail.mutex};
         return tail.ptr;
     }
-
     std::unique_ptr<Node> takeHeadUnsafe() {
         std::unique_ptr<Node> prevHead = std::move(head.ptr);
         head.ptr = std::move(prevHead->next);
         return prevHead;
     }
-
     // head element of the WaitingQueue
     WithMutex<std::unique_ptr<Node>> head;
     // pointer to the tail element
@@ -42,5 +77,10 @@ private:
     std::condition_variable m_conditional;
     // Stop flag
     bool m_stopped;
+    std::atomic<size_t> queue_size;
 };
+
+
+
+
 #endif //PARALLELQUEUE_PARALLELQUEUE_H
