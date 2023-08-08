@@ -24,12 +24,29 @@ public:
             head{new Node}, tail{head.ptr.get()}, queue_size{0}, m_stopped{false}{}
 
     bool pop(T &entry) {
-        std::lock_guard<std::mutex> lock{head.mutex};
+        std::unique_lock<std::mutex> lock{head.mutex};
         m_conditional.wait(lock, [this](){return m_stopped || head.ptr.get() != getTailSafe();});
         if (m_stopped) return false;
         entry = std::move(head.ptr->value);
         takeHeadUnsafe();
         queue_size--;
+        return true;
+    }
+
+    bool pop_pair(T &entry1, T&entry2, std::atomic<unsigned int>& is_working_count){
+        std::unique_lock<std::mutex> lock{head.mutex};
+        is_working_count--;
+        m_conditional.wait(lock, [this](){return m_stopped ||
+                get_size() >= 2;});
+        is_working_count++;
+        if (m_stopped) return false;
+        entry1 = std::move(head.ptr->value);
+        takeHeadUnsafe();
+        queue_size--;
+        entry2 = std::move(head.ptr->value);
+        takeHeadUnsafe();
+        queue_size--;
+        return true;
     }
 
     template<typename TT>
@@ -48,6 +65,10 @@ public:
         std::scoped_lock lock(head.mutex, tail.mutex);
         m_stopped = true;
         m_conditional.notify_all();
+    }
+
+    bool is_stopped(){
+        return m_stopped;
     }
 
     size_t get_size(){
@@ -76,7 +97,7 @@ private:
     // Condition for waiting data
     std::condition_variable m_conditional;
     // Stop flag
-    bool m_stopped;
+    std::atomic<bool> m_stopped;
     std::atomic<size_t> queue_size;
 };
 
