@@ -21,7 +21,7 @@ template<typename T>
 class ParallelQueue {
 public:
     ParallelQueue():
-            head{new Node}, tail{head.ptr.get()}, queue_size{0}, m_stopped{false}{}
+            head{new Node}, tail{head.ptr.get()}, m_stopped{false}, queue_size{0}{}
 
     bool pop(T &entry) {
         std::unique_lock<std::mutex> lock{head.mutex};
